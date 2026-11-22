@@ -522,13 +522,26 @@ declare_class!(
                 match plain_insert(&string, key_characters.as_deref()) {
                     PlainInsert::KeyText => {
                         let delete = self.replaced(replacement_range);
-                        // The deletion goes before the key's `KeyboardInput`, which `keyDown:`
-                        // sends after this returns.
-                        if delete.is_some() && self.ivars().ime_allowed.get() {
-                            self.notify_ime_enabled();
-                            self.queue_commit(String::new(), delete);
+                        // Grid patch: Apple Korean can answer one key with a replacement of the
+                        // previous syllable and then this plain jamo (한 + r: `insertText("한",
+                        // replacing 한)`, `insertText("ㄱ")`). Once this key has committed,
+                        // `keyDown:` drops its `KeyboardInput`, so the jamo must be committed here,
+                        // or it is lost and the next key's replacement deletes the syllable before
+                        // it.
+                        let committed_this_key = self.ivars().in_key_down.get()
+                            && self.ivars().committed_in_key_down.get();
+                        if committed_this_key && self.ivars().ime_allowed.get() {
+                            self.ivars().ime_document.borrow_mut().insert(&string);
+                            self.queue_commit(string, delete);
+                        } else {
+                            // The deletion goes before the key's `KeyboardInput`, which `keyDown:`
+                            // sends after this returns.
+                            if delete.is_some() && self.ivars().ime_allowed.get() {
+                                self.notify_ime_enabled();
+                                self.queue_commit(String::new(), delete);
+                            }
+                            self.ivars().ime_document.borrow_mut().insert(&string)
                         }
-                        self.ivars().ime_document.borrow_mut().insert(&string)
                     },
                     PlainInsert::Commit if self.ivars().ime_allowed.get() => {
                         let delete = self.replaced(replacement_range);
